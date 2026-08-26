@@ -7,6 +7,8 @@ all of it one Cloudflare Worker with a D1 database behind it.
 TypeScript, [Hono](https://hono.dev) for routing, D1 for storage, and the UI
 served from Cloudflare's edge as a static asset.
 
+**Live:** <https://crud-app.crud-app.workers.dev>
+
 ```bash
 npm install
 npm run migrate:local     # create the tables in the local D1 file
@@ -144,6 +146,9 @@ through to the API).
 
 ## Deploying
 
+Already deployed; `npm run deploy` ships a change. From scratch on another
+account:
+
 ```bash
 npx wrangler login                            # once, per machine
 npx wrangler d1 create crud-app-db            # copy database_id into wrangler.jsonc
@@ -151,6 +156,9 @@ npm run migrate                               # apply migrations to the remote D
 npm run seed                                  # optional: demo data
 npm run deploy
 ```
+
+A newly created `*.workers.dev` subdomain takes a minute or two to get its TLS
+certificate; until then the hostname resolves but the handshake fails.
 
 `npm run tail` streams live logs. Observability is enabled in `wrangler.jsonc`,
 so requests and `console.error` output are queryable from the dashboard.

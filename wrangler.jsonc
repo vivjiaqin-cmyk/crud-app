@@ -14,13 +14,13 @@
     "not_found_handling": "none"
   },
 
-  // database_id comes from `wrangler d1 create crud-app-db` and is added here
-  // before the first deploy. Local development does not need it: `wrangler dev`
-  // keeps its own SQLite file under .wrangler/state.
+  // database_id came from `wrangler d1 create crud-app-db`. Local development
+  // ignores it: `wrangler dev` keeps its own SQLite file under .wrangler/state.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "crud-app-db",
+      "database_id": "0e52894c-dfb5-4cb7-93b6-d691bef08e14",
       "migrations_dir": "migrations"
     }
   ],
