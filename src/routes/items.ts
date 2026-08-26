@@ -1,15 +1,15 @@
-import { Router } from 'express';
+import { Hono } from 'hono';
 import {
   ABSENT,
-  asObject,
   integer,
+  jsonBody,
   money,
   nullableString,
   optionalString,
   rejectUnknown,
   requiredString,
   boolean as bodyBoolean,
-} from '../body.js';
+} from '../body';
 import {
   categories,
   countMovementsForItem,
@@ -20,14 +20,15 @@ import {
   requireItem,
   updateItem,
   type ItemPatch,
-} from '../data/items.js';
-import { stockForItem } from '../data/stock.js';
-import { listMovements } from '../data/movements.js';
-import { guard } from '../db/constraints.js';
-import { HttpError } from '../middleware/errors.js';
-import { boolParam, enumParam, idParam, intParam, optionalString as queryString } from '../query.js';
+} from '../data/items';
+import { listMovements } from '../data/movements';
+import { stockForItem } from '../data/stock';
+import { guard } from '../db/constraints';
+import type { AppEnv } from '../env';
+import { HttpError } from '../errors';
+import { boolParam, enumParam, idParam, intParam, optionalString as queryString } from '../query';
 
-export const itemsRouter: Router = Router();
+export const items = new Hono<AppEnv>();
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -56,37 +57,40 @@ const SKU_TAKEN = { sku: 'An item with that SKU already exists' };
  *   ?sort=sku|name|onHand|updated
  *   ?offset=0&limit=50
  */
-itemsRouter.get('/items', (req, res) => {
-  const q = queryString(req.query['q'], 'q');
-  const category = queryString(req.query['category'], 'category');
+items.get('/items', async (c) => {
+  const q = queryString(c.req.query('q'), 'q');
+  const category = queryString(c.req.query('category'), 'category');
 
-  const { total, items } = listItems({
+  const { total, items: rows } = await listItems(c.env.DB, {
     // Spread rather than assign: exactOptionalPropertyTypes means an explicit
     // `q: undefined` is not the same thing as "no filter".
     ...(q !== undefined ? { q } : {}),
     ...(category !== undefined ? { category } : {}),
-    lowStock: boolParam(req.query['lowStock'], 'lowStock'),
-    includeArchived: boolParam(req.query['archived'], 'archived'),
-    sort: enumParam(req.query['sort'], 'sort', SORTS) ?? 'sku',
-    offset: intParam(req.query['offset'], 'offset', 0, 0, 1_000_000),
-    limit: intParam(req.query['limit'], 'limit', DEFAULT_LIMIT, 1, MAX_LIMIT),
+    lowStock: boolParam(c.req.query('lowStock'), 'lowStock'),
+    includeArchived: boolParam(c.req.query('archived'), 'archived'),
+    sort: enumParam(c.req.query('sort'), 'sort', SORTS) ?? 'sku',
+    offset: intParam(c.req.query('offset'), 'offset', 0, 0, 1_000_000),
+    limit: intParam(c.req.query('limit'), 'limit', DEFAULT_LIMIT, 1, MAX_LIMIT),
   });
 
-  res.json({ total, count: items.length, items });
+  return c.json({ total, count: rows.length, items: rows });
 });
 
 /** GET /items/categories — for populating a filter dropdown. */
-itemsRouter.get('/items/categories', (_req, res) => {
-  res.json({ categories: categories() });
+items.get('/items/categories', async (c) => {
+  return c.json({ categories: await categories(c.env.DB) });
 });
 
 /** GET /items/:id — the item, where its stock sits, and its recent movements. */
-itemsRouter.get('/items/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const item = requireItem(id);
-  const { movements } = listMovements({ itemId: id, offset: 0, limit: 20 });
+items.get('/items/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const item = await requireItem(c.env.DB, id);
+  const [byLocation, ledger] = await Promise.all([
+    stockForItem(c.env.DB, id),
+    listMovements(c.env.DB, { itemId: id, offset: 0, limit: 20 }),
+  ]);
 
-  res.json({ ...item, byLocation: stockForItem(id), recentMovements: movements });
+  return c.json({ ...item, byLocation, recentMovements: ledger.movements });
 });
 
 /**
@@ -95,12 +99,12 @@ itemsRouter.get('/items/:id', (req, res) => {
  * Creates the item only. Stock arrives through the ledger, so a new item starts
  * at zero on hand and its first receipt is a separate, dated record.
  */
-itemsRouter.post('/items', (req, res) => {
-  const body = asObject(req.body);
+items.post('/items', async (c) => {
+  const body = await jsonBody(c.req);
   rejectUnknown(body, FIELDS);
 
   const sku = requiredString(body, 'sku', 64);
-  if (findItemBySku(sku) !== undefined) {
+  if ((await findItemBySku(c.env.DB, sku)) !== undefined) {
     throw new HttpError(409, `An item with SKU "${sku}" already exists`);
   }
 
@@ -110,8 +114,8 @@ itemsRouter.post('/items', (req, res) => {
   const unitCostCents = money(body, 'unitCost');
   const reorderPoint = integer(body, 'reorderPoint', 0, MAX_QUANTITY);
 
-  const item = guard(SKU_TAKEN, () =>
-    createItem({
+  const item = await guard(SKU_TAKEN, () =>
+    createItem(c.env.DB, {
       sku,
       name: requiredString(body, 'name'),
       description: description === ABSENT ? null : description,
@@ -122,7 +126,8 @@ itemsRouter.post('/items', (req, res) => {
     }),
   );
 
-  res.status(201).location(`/items/${item.id}`).json(item);
+  c.header('Location', `/items/${item.id}`);
+  return c.json(item, 201);
 });
 
 /**
@@ -132,16 +137,16 @@ itemsRouter.post('/items', (req, res) => {
  * category. There is deliberately no quantity field — stock changes are
  * movements, not edits.
  */
-itemsRouter.patch('/items/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const body = asObject(req.body);
+items.patch('/items/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const body = await jsonBody(c.req);
   rejectUnknown(body, [...FIELDS, 'archived']);
 
   const patch: ItemPatch = {};
 
   const sku = optionalString(body, 'sku', 64);
   if (sku !== ABSENT) {
-    const clash = findItemBySku(sku);
+    const clash = await findItemBySku(c.env.DB, sku);
     if (clash !== undefined && clash.id !== id) {
       throw new HttpError(409, `An item with SKU "${sku}" already exists`);
     }
@@ -169,7 +174,7 @@ itemsRouter.patch('/items/:id', (req, res) => {
   const archived = bodyBoolean(body, 'archived');
   if (archived !== ABSENT) patch.archived = archived;
 
-  res.json(guard(SKU_TAKEN, () => updateItem(id, patch)));
+  return c.json(await guard(SKU_TAKEN, () => updateItem(c.env.DB, id, patch)));
 });
 
 /**
@@ -179,11 +184,11 @@ itemsRouter.patch('/items/:id', (req, res) => {
  * ?force=true takes the movements down with it. Losing the history is usually
  * worse than a longer item list, so the default is the cautious one.
  */
-itemsRouter.delete('/items/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const force = boolParam(req.query['force'], 'force');
-  const item = requireItem(id);
-  const history = countMovementsForItem(id);
+items.delete('/items/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const force = boolParam(c.req.query('force'), 'force');
+  const item = await requireItem(c.env.DB, id);
+  const history = await countMovementsForItem(c.env.DB, id);
 
   if (history > 0 && !force) {
     throw new HttpError(
@@ -193,6 +198,6 @@ itemsRouter.delete('/items/:id', (req, res) => {
     );
   }
 
-  deleteItem(id);
-  res.json({ deleted: { id, sku: item.sku }, movementsDeleted: force ? history : 0 });
+  const movementsDeleted = await deleteItem(c.env.DB, id);
+  return c.json({ deleted: { id, sku: item.sku }, movementsDeleted });
 });

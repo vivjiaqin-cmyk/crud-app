@@ -1,19 +1,20 @@
-# crud-app — inventory tracking
+# crud-app — inventory tracking on Cloudflare
 
 A small inventory system: **items**, **locations**, and a **movement ledger** that
-ties them together. Full CRUD over a REST API, plus a single-page browser UI
-served from the same process.
+ties them together. Full CRUD over a REST API, plus a single-page browser UI —
+all of it one Cloudflare Worker with a D1 database behind it.
 
-TypeScript, Express 5, and SQLite through Node's built-in `node:sqlite` — one
-runtime dependency (`express`) and no database to install.
+TypeScript, [Hono](https://hono.dev) for routing, D1 for storage, and the UI
+served from Cloudflare's edge as a static asset.
 
 ```bash
 npm install
-npm run seed     # demo data: 3 locations, 12 items, a month of movements
-npm run dev      # http://localhost:3100
+npm run migrate:local     # create the tables in the local D1 file
+npm run seed:local        # demo data: 3 locations, 12 items, a month of movements
+npm run dev               # http://localhost:8787
 ```
 
-Open <http://localhost:3100> for the UI, or `GET /api` for the endpoint list.
+Open <http://localhost:8787> for the UI, or `GET /api` for the endpoint list.
 
 ## The one design decision worth knowing
 
@@ -31,12 +32,33 @@ cannot be bypassed by a future caller:
 - The sign of a movement is fixed by its kind (`CHECK` constraint): receipts and
   transfers-in add, issues and transfers-out subtract, adjustments go either way
   but never zero.
-- A transfer is two rows sharing a `transfer_group`, written in one transaction,
-  so the total across locations cannot change and half a transfer cannot exist.
+- A transfer is two rows sharing a `transfer_group`, written in one D1 `batch()`
+  — a single transaction — so the total across locations cannot change and half a
+  transfer cannot exist.
 
-On top of that the API refuses any movement that would drive a location's balance
-negative (`ALLOW_NEGATIVE_STOCK=true` if your process really books issues before
-receipts land).
+## How the no-negative-stock rule survives D1
+
+D1 has no interactive transactions: a request cannot hold `BEGIN` open across an
+`await`. So the balance check does not run as a separate read before the insert
+— it runs *inside* it:
+
+```sql
+INSERT INTO movements (...)
+SELECT ?, ?, ?, ?, ...
+WHERE ? = 1                                    -- ALLOW_NEGATIVE_STOCK
+   OR ? >= 0                                   -- inbound, nothing to check
+   OR (SELECT COALESCE(SUM(quantity), 0)
+       FROM movements
+       WHERE item_id = ? AND location_id = ?) + ? >= 0
+```
+
+SQLite evaluates the sum and the insert together, so two concurrent issues cannot
+both see enough stock. Zero rows affected means the guard refused the write, and
+the route turns that into a 409 carrying the balance that caused it.
+
+A transfer extends the same idea: the outbound row carries that guard, and the
+inbound row inserts only `WHERE (SELECT COUNT(*) ... WHERE transfer_group = ?) = 1`
+— it lands if and only if its other half did.
 
 ## Data model
 
@@ -104,7 +126,7 @@ what happened.
 
 `GET /stock?item=&location=&includeZero` · `GET /stock/low?limit=` (reorder list,
 biggest shortfall first) · `GET /stock/summary` (dashboard tiles) ·
-`GET /health` (probes the database, 503 if it is unreachable)
+`GET /health` (queries D1; 503 if the database is unreachable)
 
 ## The UI
 
@@ -116,48 +138,73 @@ API as any other client. Three tabs:
 - **Movements** — the ledger, filterable by item, location, kind and date range.
 - **Locations** — cards showing what each one holds, with create/edit/delete.
 
-Low-stock lines are flagged in the table and counted in the header tiles.
+It is uploaded as a static asset, so `GET /` is served from the edge without
+invoking the Worker at all (`not_found_handling: "none"` sends every other path
+through to the API).
+
+## Deploying
+
+```bash
+npx wrangler login                            # once, per machine
+npx wrangler d1 create crud-app-db            # copy database_id into wrangler.jsonc
+npm run migrate                               # apply migrations to the remote D1
+npm run seed                                  # optional: demo data
+npm run deploy
+```
+
+`npm run tail` streams live logs. Observability is enabled in `wrangler.jsonc`,
+so requests and `console.error` output are queryable from the dashboard.
 
 ## Configuration
 
-| Variable | Default | |
+Vars live in `wrangler.jsonc` and arrive per request as bindings.
+
+| Binding | Default | |
 | --- | --- | --- |
-| `PORT` | `3100` | |
-| `DB_FILE` | `data/inventory.db` | `:memory:` for a throwaway database |
-| `ALLOW_NEGATIVE_STOCK` | `false` | permit issues that overdraw a location |
-| `CORS_ORIGINS` | `*` | comma-separated allowlist |
+| `DB` | — | the D1 database |
+| `ALLOW_NEGATIVE_STOCK` | `"false"` | permit issues that overdraw a location |
+| `CORS_ORIGINS` | `"*"` | comma-separated allowlist |
 
 ## Scripts
 
 | | |
 | --- | --- |
-| `npm run dev` | watch mode via tsx |
-| `npm run build` / `npm start` | compile to `dist/`, run compiled |
-| `npm run seed` | demo data; `-- --force` wipes first |
+| `npm run dev` | `wrangler dev` against the local D1 file |
+| `npm run deploy` | deploy the Worker and upload the UI |
+| `npm run migrate` / `migrate:local` | apply migrations, remote / local |
+| `npm run seed` / `seed:local` | apply `seed.sql`, remote / local (**replaces all rows**) |
+| `npm run seed:build` | regenerate `seed.sql` from `scripts/generate-seed.mjs` |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run types` | regenerate `worker-configuration.d.ts` from the config |
+| `npm run tail` | stream production logs |
 
 ## Layout
 
 ```
+wrangler.jsonc         Worker, D1 binding, static assets, vars
+migrations/            D1 schema, and the constraints holding the invariants
+seed.sql               generated demo data (scripts/generate-seed.mjs)
 src/
-  index.ts            startup and shutdown
-  app.ts              routes, middleware, static UI
-  config.ts           environment
-  types.ts            the domain types
-  query.ts body.ts    query-string and request-body validation
+  index.ts             the Hono app: CORS, routes, error handling
+  env.ts               bindings and the settings derived from them
+  types.ts             the domain types
+  errors.ts            HttpError
+  query.ts body.ts     query-string and request-body validation
   db/
-    client.ts         the SQLite handle, transactions, row helpers
-    schema.ts         DDL and the constraints that hold the invariants
-    constraints.ts    SQLite constraint errors to 4xx
-    seed.ts           demo data
-  data/               items, locations, movements, stock — all SQL lives here
-  routes/             HTTP shape only
-public/index.html     the UI
+    d1.ts              query helpers, batch, and why there are no transactions
+    constraints.ts     SQLite constraint errors to 4xx
+  data/                items, locations, movements, stock — all SQL lives here
+  routes/              HTTP shape only
+public/index.html      the UI
 ```
 
 ## Not included
 
-No authentication, and the API writes — put it behind auth before exposing it
-beyond a trusted network. Single process only: `node:sqlite` is synchronous, so
-concurrent reads and writes are serialised inside one Node process, which is
-exactly why the stock checks are safe without extra locking.
+No authentication, and the API writes — put Cloudflare Access or an API token
+check in front of it before pointing anything real at it.
+
+On the Workers Free plan D1 allows 5 million rows read and 100,000 rows written
+per day, with 5 GB of storage across the account — orders of magnitude more than
+this schema will use. The ledger grows without bound by design: history is the
+point, so plan on archiving old movements rather than deleting them if it ever
+does get large.

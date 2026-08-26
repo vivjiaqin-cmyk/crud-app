@@ -1,9 +1,9 @@
-import { HttpError } from './middleware/errors.js';
+import { HttpError } from './errors';
 
 /**
- * Express gives `string | string[] | ParsedQs | undefined` for every query value.
- * These narrow it to what a handler actually wants, rejecting the rest with a 400
- * that says which parameter was wrong rather than failing deeper in.
+ * Query strings and path params arrive as `string | undefined`. These narrow
+ * them to what a handler actually wants, rejecting the rest with a 400 that says
+ * which parameter was wrong rather than failing deeper in.
  */
 
 export function optionalString(value: unknown, name: string): string | undefined {

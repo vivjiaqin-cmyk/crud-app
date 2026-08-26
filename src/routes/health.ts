@@ -1,29 +1,29 @@
-import { Router } from 'express';
-import { one } from '../db/client.js';
-import { config } from '../config.js';
+import { Hono } from 'hono';
+import { one } from '../db/d1';
+import type { AppEnv } from '../env';
 
-export const healthRouter: Router = Router();
-
-const startedAt = Date.now();
+export const health = new Hono<AppEnv>();
 
 /**
- * Probes the database rather than just reporting that the process is up: a
- * server that cannot reach its SQLite file is not healthy, however well it
- * answers HTTP.
+ * Probes D1 rather than just reporting that the Worker ran: an isolate that
+ * cannot reach its database is not healthy, however well it answers HTTP.
+ *
+ * There is no uptime to report — a Worker isolate is created and discarded
+ * around requests, so the only meaningful liveness signal is the query.
  */
-healthRouter.get('/health', (_req, res) => {
-  let database: { ok: boolean; items?: number; error?: string };
+health.get('/health', async (c) => {
+  const started = Date.now();
+  let database: { ok: boolean; items?: number; queryMs?: number; error?: string };
+
   try {
-    const row = one<{ total: number }>('SELECT COUNT(*) AS total FROM items');
-    database = { ok: true, items: row?.total ?? 0 };
+    const row = await one<{ total: number }>(c.env.DB, 'SELECT COUNT(*) AS total FROM items');
+    database = { ok: true, items: row?.total ?? 0, queryMs: Date.now() - started };
   } catch (err) {
     database = { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
   }
 
-  res.status(database.ok ? 200 : 503).json({
-    status: database.ok ? 'ok' : 'degraded',
-    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
-    env: config.env,
-    database,
-  });
+  return c.json(
+    { status: database.ok ? 'ok' : 'degraded', now: new Date().toISOString(), database },
+    database.ok ? 200 : 503,
+  );
 });

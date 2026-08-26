@@ -1,13 +1,13 @@
-import { HttpError } from '../middleware/errors.js';
+import { HttpError } from '../errors';
 
 /**
  * Turns SQLite constraint failures into the 4xx they really are.
  *
- * The routes check for a duplicate SKU or code before inserting, and because
- * node:sqlite is synchronous that check cannot be interleaved with another
- * request in this process. A second process writing the same file still can
- * collide, and the UNIQUE index is what actually holds the line — this keeps
- * that path from surfacing as an opaque 500.
+ * The routes check for a duplicate SKU or code before inserting, which catches
+ * the ordinary case with a clear message. On Workers that check and the insert
+ * are separate round trips to D1, so two requests racing on the same SKU can
+ * both pass it — the UNIQUE index is what actually holds the line, and this
+ * keeps that path from surfacing as an opaque 500.
  */
 export function asHttpError(err: unknown, context: Record<string, string>): unknown {
   if (!(err instanceof Error)) return err;
@@ -31,9 +31,12 @@ export function asHttpError(err: unknown, context: Record<string, string>): unkn
 }
 
 /** Runs fn, rewriting constraint failures on the way out. */
-export function guard<T>(context: Record<string, string>, fn: () => T): T {
+export async function guard<T>(
+  context: Record<string, string>,
+  fn: () => Promise<T>,
+): Promise<T> {
   try {
-    return fn();
+    return await fn();
   } catch (err) {
     throw asHttpError(err, context);
   }

@@ -2,25 +2,29 @@
   "name": "crud-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Inventory tracking CRUD app: items, locations, and a stock movement ledger.",
-  "type": "module",
+  "description": "Inventory tracking CRUD app on Cloudflare Workers + D1: items, locations, and a stock movement ledger.",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "seed": "tsx src/db/seed.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "express": "^5.1.0"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "types": "wrangler types",
+    "migrate:local": "wrangler d1 migrations apply crud-app-db --local",
+    "migrate": "wrangler d1 migrations apply crud-app-db --remote",
+    "seed:local": "wrangler d1 execute crud-app-db --local --file=./seed.sql",
+    "seed": "wrangler d1 execute crud-app-db --remote --file=./seed.sql",
+    "seed:build": "node scripts/generate-seed.mjs",
+    "tail": "wrangler tail"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
+    "@cloudflare/workers-types": "^5.20260826.1",
     "@types/node": "^24.0.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "wrangler": "^4.126.0"
+  },
+  "dependencies": {
+    "hono": "^4.13.5"
   }
 }

@@ -1,7 +1,7 @@
-import { Router } from 'express';
-import { ABSENT, asObject, enumField, integer, nullableString, rejectUnknown, timestamp } from '../body.js';
-import { requireItem } from '../data/items.js';
-import { requireLocation } from '../data/locations.js';
+import { Hono } from 'hono';
+import { ABSENT, enumField, integer, jsonBody, nullableString, rejectUnknown, timestamp } from '../body';
+import { requireItem } from '../data/items';
+import { requireLocation } from '../data/locations';
 import {
   MOVEMENT_KINDS,
   POSTABLE_KINDS,
@@ -10,11 +10,12 @@ import {
   listMovements,
   requireMovement,
   transferStock,
-} from '../data/movements.js';
-import { HttpError } from '../middleware/errors.js';
-import { enumParam, idParam, intParam, optionalIdParam, optionalString } from '../query.js';
+} from '../data/movements';
+import { settings, type AppEnv } from '../env';
+import { HttpError } from '../errors';
+import { enumParam, idParam, intParam, optionalIdParam, optionalString } from '../query';
 
-export const movementsRouter: Router = Router();
+export const movements = new Hono<AppEnv>();
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -49,14 +50,14 @@ const TRANSFER_FIELDS = [
  * Newest first. This is the audit trail, so nothing is ever rewritten here —
  * corrections are new rows.
  */
-movementsRouter.get('/movements', (req, res) => {
-  const itemId = optionalIdParam(req.query['item'], 'item');
-  const locationId = optionalIdParam(req.query['location'], 'location');
-  const kind = enumParam(req.query['kind'], 'kind', MOVEMENT_KINDS);
-  const from = optionalString(req.query['from'], 'from');
-  const to = optionalString(req.query['to'], 'to');
+movements.get('/movements', async (c) => {
+  const itemId = optionalIdParam(c.req.query('item'), 'item');
+  const locationId = optionalIdParam(c.req.query('location'), 'location');
+  const kind = enumParam(c.req.query('kind'), 'kind', MOVEMENT_KINDS);
+  const from = optionalString(c.req.query('from'), 'from');
+  const to = optionalString(c.req.query('to'), 'to');
 
-  const { total, movements } = listMovements({
+  const { total, movements: rows } = await listMovements(c.env.DB, {
     ...(itemId !== undefined ? { itemId } : {}),
     ...(locationId !== undefined ? { locationId } : {}),
     ...(kind !== undefined ? { kind } : {}),
@@ -64,16 +65,16 @@ movementsRouter.get('/movements', (req, res) => {
     // A bare date as an upper bound should include that whole day, not stop at
     // its midnight: "to=2026-08-31" means through the 31st.
     ...(to !== undefined ? { to: to.length === 10 ? `${to}T23:59:59.999Z` : to } : {}),
-    offset: intParam(req.query['offset'], 'offset', 0, 0, 1_000_000),
-    limit: intParam(req.query['limit'], 'limit', DEFAULT_LIMIT, 1, MAX_LIMIT),
+    offset: intParam(c.req.query('offset'), 'offset', 0, 0, 1_000_000),
+    limit: intParam(c.req.query('limit'), 'limit', DEFAULT_LIMIT, 1, MAX_LIMIT),
   });
 
-  res.json({ total, count: movements.length, movements });
+  return c.json({ total, count: rows.length, movements: rows });
 });
 
 /** GET /movements/:id */
-movementsRouter.get('/movements/:id', (req, res) => {
-  res.json(requireMovement(idParam(req.params['id'], 'id')));
+movements.get('/movements/:id', async (c) => {
+  return c.json(await requireMovement(c.env.DB, idParam(c.req.param('id'), 'id')));
 });
 
 /**
@@ -83,8 +84,8 @@ movementsRouter.get('/movements/:id', (req, res) => {
  * an issue — the kind decides the sign — and a signed delta for an adjustment,
  * where the whole point is that it can go either way.
  */
-movementsRouter.post('/movements', (req, res) => {
-  const body = asObject(req.body);
+movements.post('/movements', async (c) => {
+  const body = await jsonBody(c.req);
   rejectUnknown(body, MOVEMENT_FIELDS);
 
   const itemId = integer(body, 'itemId', 1, Number.MAX_SAFE_INTEGER);
@@ -98,13 +99,13 @@ movementsRouter.post('/movements', (req, res) => {
   if (quantity === ABSENT) throw new HttpError(400, 'quantity is required');
 
   // 404 on the way in, rather than a foreign-key error on the way out.
-  requireItem(itemId);
-  requireLocation(locationId);
+  await requireItem(c.env.DB, itemId);
+  await requireLocation(c.env.DB, locationId);
 
   const reference = nullableString(body, 'reference', 80);
   const note = nullableString(body, 'note');
 
-  const movement = createMovement({
+  const movement = await createMovement(c.env.DB, {
     itemId,
     locationId,
     kind,
@@ -112,9 +113,11 @@ movementsRouter.post('/movements', (req, res) => {
     reference: reference === ABSENT ? null : reference,
     note: note === ABSENT ? null : note,
     occurredAt: timestamp(body, 'occurredAt'),
+    allowNegativeStock: settings(c.env).allowNegativeStock,
   });
 
-  res.status(201).location(`/movements/${movement.id}`).json(movement);
+  c.header('Location', `/movements/${movement.id}`);
+  return c.json(movement, 201);
 });
 
 /**
@@ -125,12 +128,12 @@ movementsRouter.post('/movements', (req, res) => {
  * correction after the fact, post a reversing adjustment instead so the history
  * still shows what happened.
  */
-movementsRouter.delete('/movements/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const movement = requireMovement(id);
-  const deleted = deleteMovement(id);
+movements.delete('/movements/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const movement = await requireMovement(c.env.DB, id);
+  const deleted = await deleteMovement(c.env.DB, id, settings(c.env).allowNegativeStock);
 
-  res.json({
+  return c.json({
     deleted,
     movement: { id: movement.id, kind: movement.kind, quantity: movement.quantity },
     transferGroup: movement.transferGroup,
@@ -141,10 +144,10 @@ movementsRouter.delete('/movements/:id', (req, res) => {
  * POST /transfers
  *
  * Moves stock between locations. Writes a transfer_out and a transfer_in sharing
- * a transfer_group in one transaction, so the company-wide total cannot change.
+ * a transfer_group in one batch, so the company-wide total cannot change.
  */
-movementsRouter.post('/transfers', (req, res) => {
-  const body = asObject(req.body);
+movements.post('/transfers', async (c) => {
+  const body = await jsonBody(c.req);
   rejectUnknown(body, TRANSFER_FIELDS);
 
   const itemId = integer(body, 'itemId', 1, Number.MAX_SAFE_INTEGER);
@@ -157,14 +160,14 @@ movementsRouter.post('/transfers', (req, res) => {
   if (toLocationId === ABSENT) throw new HttpError(400, 'toLocationId is required');
   if (quantity === ABSENT) throw new HttpError(400, 'quantity is required');
 
-  requireItem(itemId);
-  requireLocation(fromLocationId, 'fromLocationId');
-  requireLocation(toLocationId, 'toLocationId');
+  await requireItem(c.env.DB, itemId);
+  await requireLocation(c.env.DB, fromLocationId, 'fromLocationId');
+  await requireLocation(c.env.DB, toLocationId, 'toLocationId');
 
   const reference = nullableString(body, 'reference', 80);
   const note = nullableString(body, 'note');
 
-  const transfer = transferStock({
+  const transfer = await transferStock(c.env.DB, {
     itemId,
     fromLocationId,
     toLocationId,
@@ -172,7 +175,8 @@ movementsRouter.post('/transfers', (req, res) => {
     reference: reference === ABSENT ? null : reference,
     note: note === ABSENT ? null : note,
     occurredAt: timestamp(body, 'occurredAt'),
+    allowNegativeStock: settings(c.env).allowNegativeStock,
   });
 
-  res.status(201).json(transfer);
+  return c.json(transfer, 201);
 });

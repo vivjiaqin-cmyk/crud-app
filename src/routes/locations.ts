@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { ABSENT, asObject, enumField, optionalString, rejectUnknown, requiredString } from '../body.js';
+import { Hono } from 'hono';
+import { ABSENT, enumField, jsonBody, optionalString, rejectUnknown, requiredString } from '../body';
 import {
   LOCATION_KINDS,
   countMovementsForLocation,
@@ -10,64 +10,67 @@ import {
   requireLocation,
   updateLocation,
   type LocationPatch,
-} from '../data/locations.js';
-import { listStock } from '../data/stock.js';
-import { guard } from '../db/constraints.js';
-import { HttpError } from '../middleware/errors.js';
-import { boolParam, enumParam, idParam } from '../query.js';
+} from '../data/locations';
+import { listStock } from '../data/stock';
+import { guard } from '../db/constraints';
+import type { AppEnv } from '../env';
+import { HttpError } from '../errors';
+import { boolParam, enumParam, idParam } from '../query';
 
-export const locationsRouter: Router = Router();
+export const locations = new Hono<AppEnv>();
 
 const FIELDS = ['code', 'name', 'kind'] as const;
 const CODE_TAKEN = { code: 'A location with that code already exists' };
 
 /** GET /locations?kind=warehouse|store|transit */
-locationsRouter.get('/locations', (req, res) => {
-  const kind = enumParam(req.query['kind'], 'kind', LOCATION_KINDS);
-  const locations = listLocations(kind);
-  res.json({ count: locations.length, locations });
+locations.get('/locations', async (c) => {
+  const kind = enumParam(c.req.query('kind'), 'kind', LOCATION_KINDS);
+  const rows = await listLocations(c.env.DB, kind);
+  return c.json({ count: rows.length, locations: rows });
 });
 
 /** GET /locations/:id — the location and everything currently in it. */
-locationsRouter.get('/locations/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const location = requireLocation(id);
-  res.json({ ...location, stock: listStock({ locationId: id, includeZero: false }) });
+locations.get('/locations/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const location = await requireLocation(c.env.DB, id);
+  const stock = await listStock(c.env.DB, { locationId: id, includeZero: false });
+  return c.json({ ...location, stock });
 });
 
 /** POST /locations */
-locationsRouter.post('/locations', (req, res) => {
-  const body = asObject(req.body);
+locations.post('/locations', async (c) => {
+  const body = await jsonBody(c.req);
   rejectUnknown(body, FIELDS);
 
   const code = requiredString(body, 'code', 32);
-  if (findLocationByCode(code) !== undefined) {
+  if ((await findLocationByCode(c.env.DB, code)) !== undefined) {
     throw new HttpError(409, `A location with code "${code}" already exists`);
   }
 
   const kind = enumField(body, 'kind', LOCATION_KINDS);
-  const location = guard(CODE_TAKEN, () =>
-    createLocation({
+  const location = await guard(CODE_TAKEN, () =>
+    createLocation(c.env.DB, {
       code,
       name: requiredString(body, 'name'),
       kind: kind === ABSENT ? 'warehouse' : kind,
     }),
   );
 
-  res.status(201).location(`/locations/${location.id}`).json(location);
+  c.header('Location', `/locations/${location.id}`);
+  return c.json(location, 201);
 });
 
 /** PATCH /locations/:id */
-locationsRouter.patch('/locations/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const body = asObject(req.body);
+locations.patch('/locations/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const body = await jsonBody(c.req);
   rejectUnknown(body, FIELDS);
 
   const patch: LocationPatch = {};
 
   const code = optionalString(body, 'code', 32);
   if (code !== ABSENT) {
-    const clash = findLocationByCode(code);
+    const clash = await findLocationByCode(c.env.DB, code);
     if (clash !== undefined && clash.id !== id) {
       throw new HttpError(409, `A location with code "${code}" already exists`);
     }
@@ -80,7 +83,7 @@ locationsRouter.patch('/locations/:id', (req, res) => {
   const kind = enumField(body, 'kind', LOCATION_KINDS);
   if (kind !== ABSENT) patch.kind = kind;
 
-  res.json(guard(CODE_TAKEN, () => updateLocation(id, patch)));
+  return c.json(await guard(CODE_TAKEN, () => updateLocation(c.env.DB, id, patch)));
 });
 
 /**
@@ -90,11 +93,11 @@ locationsRouter.patch('/locations/:id', (req, res) => {
  * an empty location is cheap to keep and a deleted one takes its movements with
  * it, so ?force=true is the only way through and it says what it will destroy.
  */
-locationsRouter.delete('/locations/:id', (req, res) => {
-  const id = idParam(req.params['id'], 'id');
-  const force = boolParam(req.query['force'], 'force');
-  const location = requireLocation(id);
-  const history = countMovementsForLocation(id);
+locations.delete('/locations/:id', async (c) => {
+  const id = idParam(c.req.param('id'), 'id');
+  const force = boolParam(c.req.query('force'), 'force');
+  const location = await requireLocation(c.env.DB, id);
+  const history = await countMovementsForLocation(c.env.DB, id);
 
   if (history > 0 && !force) {
     throw new HttpError(
@@ -105,6 +108,6 @@ locationsRouter.delete('/locations/:id', (req, res) => {
     );
   }
 
-  deleteLocation(id);
-  res.json({ deleted: { id, code: location.code }, movementsDeleted: force ? history : 0 });
+  const movementsDeleted = await deleteLocation(c.env.DB, id);
+  return c.json({ deleted: { id, code: location.code }, movementsDeleted });
 });

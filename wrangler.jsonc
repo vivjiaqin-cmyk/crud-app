@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "crud-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+
+  "observability": { "enabled": true },
+
+  // The UI. Assets are matched first, so GET / serves index.html without waking
+  // the Worker; "none" means any other path (every API route) falls through to
+  // the Worker instead of being answered with the page.
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "none"
+  },
+
+  // database_id comes from `wrangler d1 create crud-app-db` and is added here
+  // before the first deploy. Local development does not need it: `wrangler dev`
+  // keeps its own SQLite file under .wrangler/state.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "crud-app-db",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "vars": {
+    "ALLOW_NEGATIVE_STOCK": "false",
+    "CORS_ORIGINS": "*"
+  }
+}

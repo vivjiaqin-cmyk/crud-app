@@ -1,4 +1,4 @@
-import { HttpError } from './middleware/errors.js';
+import { HttpError } from './errors';
 
 /**
  * Body validation for the write endpoints. Every helper names the field it
@@ -10,6 +10,17 @@ import { HttpError } from './middleware/errors.js';
  */
 
 export const ABSENT = Symbol('absent');
+
+/** Reads and validates the request body, in the shape every write route wants. */
+export async function jsonBody(request: { json(): Promise<unknown> }): Promise<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
+  } catch {
+    throw new HttpError(400, 'Request body is not valid JSON');
+  }
+  return asObject(parsed);
+}
 
 export function asObject(body: unknown): Record<string, unknown> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
