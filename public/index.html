@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crud-app — inventory</title>
+<meta name="description" content="Inventory tracking: items, locations, and a stock movement ledger.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E">
+
+<style>
+  :root {
+    --ground:      #F4F6F9;
+    --surface:     #FFFFFF;
+    --sunk:        #EDF1F6;
+    --ink:         #16202B;
+    --muted:       #55636F;
+    --faint:       #8492A0;
+    --line:        #E2E8EF;
+    --line-firm:   #C7D2DE;
+    --accent:      #2F6FD0;
+    --accent-ink:  #21548F;
+    --accent-soft: #E5EEFB;
+    --go:          #14724A;
+    --go-soft:     #DCF2E7;
+    --warn:        #90561E;
+    --warn-soft:   #FCEEDC;
+    --bad:         #963029;
+    --bad-soft:    #FBE6E4;
+    --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #0F151C;
+      --surface:     #18212B;
+      --sunk:        #131B24;
+      --ink:         #E8EEF4;
+      --muted:       #9AA8B5;
+      --faint:       #70808E;
+      --line:        #263140;
+      --line-firm:   #384857;
+      --accent:      #74B0EE;
+      --accent-ink:  #A4CCF7;
+      --accent-soft: #16283A;
+      --go:          #5FCE97;
+      --go-soft:     #10281D;
+      --warn:        #E0AC57;
+      --warn-soft:   #2B2415;
+      --bad:         #EE9088;
+      --bad-soft:    #2E1817;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 15px/1.5 var(--sans);
+  }
+
+  header.top {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 18px 20px 0;
+  }
+
+  .masthead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .masthead h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .masthead p { margin: 0; color: var(--muted); font-size: 13px; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+
+  .tile {
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .tile .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile.alert { background: var(--warn-soft); border-color: transparent; }
+  .tile.alert .value { color: var(--warn); }
+
+  nav.tabs { display: flex; gap: 4px; }
+  nav.tabs button {
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 9px 12px;
+    font: inherit;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  nav.tabs button[aria-selected="true"] { color: var(--accent-ink); border-bottom-color: var(--accent); }
+
+  main { padding: 18px 20px 60px; max-width: 1200px; }
+
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar .grow { flex: 1 1 200px; }
+  .spacer { flex: 1 1 auto; }
+
+  input, select, textarea, button {
+    font: inherit;
+    color: var(--ink);
+    border-radius: 8px;
+    border: 1px solid var(--line-firm);
+    background: var(--surface);
+    padding: 7px 9px;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  label.check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
+  label.check input { width: 16px; height: 16px; }
+
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.ghost { background: none; border-color: var(--line-firm); }
+  button.danger { background: none; border-color: transparent; color: var(--bad); padding: 4px 6px; }
+  button.link { background: none; border: 0; color: var(--accent-ink); padding: 4px 6px; text-decoration: underline; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .scroll { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--faint);
+    background: var(--sunk);
+    position: sticky;
+    top: 0;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--sunk); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.wrap { white-space: normal; min-width: 200px; }
+  td.sku { font-family: var(--mono); font-size: 13px; }
+  td.actions { text-align: right; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--sunk);
+    color: var(--muted);
+  }
+  .pill.low { background: var(--warn-soft); color: var(--warn); }
+  .pill.in { background: var(--go-soft); color: var(--go); }
+  .pill.out { background: var(--bad-soft); color: var(--bad); }
+  .pill.adj { background: var(--accent-soft); color: var(--accent-ink); }
+
+  .empty { padding: 34px 20px; text-align: center; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .foot { display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--muted); font-size: 13px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .loc { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .loc h3 { margin: 0 0 2px; font-size: 16px; }
+  .loc code { font-family: var(--mono); color: var(--accent-ink); }
+  .loc .row { display: flex; gap: 8px; margin-top: 10px; }
+
+  dialog {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--ink);
+    padding: 0;
+    width: min(520px, calc(100vw - 24px));
+  }
+  dialog::backdrop { background: rgba(8, 14, 20, .5); }
+  dialog h2 { margin: 0; font-size: 17px; }
+  dialog .head { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  dialog .body { padding: 16px 18px; display: grid; gap: 12px; }
+  dialog .foot2 { padding: 14px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .field { display: grid; gap: 4px; }
+  .field > span { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .field .hint { font-weight: 400; color: var(--faint); }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .dialog-error { color: var(--bad); font-size: 13px; min-height: 18px; }
+
+  #toast {
+    position: fixed;
+    inset: auto 16px 16px auto;
+    display: grid;
+    gap: 8px;
+    z-index: 10;
+  }
+  #toast div {
+    background: var(--surface);
+    border: 1px solid var(--line-firm);
+    border-left: 4px solid var(--go);
+    border-radius: 8px;
+    padding: 10px 14px;
+    box-shadow: 0 6px 20px rgba(10, 20, 30, .12);
+    max-width: 360px;
+  }
+  #toast div.bad { border-left-color: var(--bad); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="masthead">
+    <h1>📦 Inventory</h1>
+    <p>Items, locations, and every movement in between.</p>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="items" aria-selected="true">Items</button>
+    <button role="tab" data-view="movements" aria-selected="false">Movements</button>
+    <button role="tab" data-view="locations" aria-selected="false">Locations</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Items -->
+  <section id="view-items">
+    <div class="toolbar">
+      <input id="q" class="grow" type="search" placeholder="Search SKU, name, description, category" autocomplete="off">
+      <select id="category"><option value="">All categories</option></select>
+      <select id="sort">
+        <option value="sku">Sort: SKU</option>
+        <option value="name">Sort: name</option>
+        <option value="onHand">Sort: on hand</option>
+        <option value="updated">Sort: recently changed</option>
+      </select>
+      <label class="check"><input type="checkbox" id="lowOnly"> Low stock only</label>
+      <label class="check"><input type="checkbox" id="showArchived"> Archived</label>
+      <span class="spacer"></span>
+      <button class="primary" id="newItem">New item</button>
+    </div>
+
+    <div class="card">
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th><th>Item</th><th>Category</th>
+              <th class="num">On hand</th><th class="num">Reorder at</th>
+              <th class="num">Unit cost</th><th class="num">Value</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="itemRows"></tbody>
+        </table>
+      </div>
+      <div class="foot" id="itemsFoot"></div>
+    </div>
+  </section>
+
+  <!-- Movements -->
+  <section id="view-movements" hidden>
+    <div class="toolbar">
+      <select id="mItem"><option value="">All items</option></select>
+      <select id="mLocation"><option value="">All locations</option></select>
+      <select id="mKind">
+        <option value="">All kinds</option>
+        <option value="receipt">Receipt</option>
+        <option value="issue">Issue</option>
+        <option value="adjustment">Adjustment</option>
+        <option value="transfer_in">Transfer in</option>
+        <option value="transfer_out">Transfer out</option>
+      </select>
+      <input type="date" id="mFrom" title="From date">
+      <input type="date" id="mTo" title="To date">
+      <span class="spacer"></span>
+      <button class="ghost" id="mReset">Clear filters</button>
+    </div>
+
+    <div class="card">
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th><th>Kind</th><th>Item</th><th>Location</th>
+              <th class="num">Qty</th><th>Reference</th><th>Note</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="movementRows"></tbody>
+        </table>
+      </div>
+      <div class="foot" id="movementsFoot"></div>
+    </div>
+  </section>
+
+  <!-- Locations -->
+  <section id="view-locations" hidden>
+    <div class="toolbar">
+      <span class="muted">Stock lives at a location; transfers move it between them.</span>
+      <span class="spacer"></span>
+      <button class="primary" id="newLocation">New location</button>
+    </div>
+    <div class="cards" id="locationCards"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<!-- Item create / edit -->
+<dialog id="itemDialog">
+  <form method="dialog" id="itemForm">
+    <div class="head"><h2 id="itemDialogTitle">New item</h2></div>
+    <div class="body">
+      <div class="pair">
+        <label class="field"><span>SKU</span><input name="sku" required maxlength="64" placeholder="WID-001"></label>
+        <label class="field"><span>Unit <span class="hint">of issue</span></span><input name="unit" maxlength="24" placeholder="each"></label>
+      </div>
+      <label class="field"><span>Name</span><input name="name" required maxlength="200" placeholder="Hex bolt M6 x 30mm"></label>
+      <div class="pair">
+        <label class="field"><span>Category</span><input name="category" maxlength="80" placeholder="Fasteners"></label>
+        <label class="field"><span>Unit cost</span><input name="unitCost" type="number" min="0" step="0.01" placeholder="0.00"></label>
+      </div>
+      <label class="field">
+        <span>Reorder point <span class="hint">flagged at or below this</span></span>
+        <input name="reorderPoint" type="number" min="0" step="1" placeholder="0">
+      </label>
+      <label class="field"><span>Description</span><textarea name="description" maxlength="2000"></textarea></label>
+      <label class="check" id="archivedRow" hidden><input type="checkbox" name="archived"> Archived (hidden from the default list)</label>
+      <p class="dialog-error" id="itemError"></p>
+    </div>
+    <div class="foot2">
+      <button type="button" class="ghost" data-close>Cancel</button>
+      <button type="submit" class="primary" id="itemSubmit">Create item</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Stock movement -->
+<dialog id="moveDialog">
+  <form method="dialog" id="moveForm">
+    <div class="head"><h2 id="moveDialogTitle">Move stock</h2></div>
+    <div class="body">
+      <label class="field">
+        <span>What happened</span>
+        <select name="kind" id="moveKind">
+          <option value="receipt">Receipt — stock came in</option>
+          <option value="issue">Issue — stock went out</option>
+          <option value="adjustment">Adjustment — correcting the count</option>
+          <option value="transfer">Transfer — moved between locations</option>
+        </select>
+      </label>
+      <div class="pair">
+        <label class="field"><span id="fromLabel">Location</span><select name="locationId" id="moveLocation"></select></label>
+        <label class="field" id="toRow" hidden><span>To location</span><select name="toLocationId" id="moveToLocation"></select></label>
+      </div>
+      <div class="pair">
+        <label class="field">
+          <span>Quantity <span class="hint" id="qtyHint">units</span></span>
+          <input name="quantity" id="moveQuantity" type="number" step="1" required>
+        </label>
+        <label class="field"><span>When <span class="hint">optional</span></span><input name="occurredAt" type="datetime-local"></label>
+      </div>
+      <label class="field"><span>Reference <span class="hint">PO, work order, stocktake</span></span><input name="reference" maxlength="80"></label>
+      <label class="field"><span>Note</span><input name="note" maxlength="2000"></label>
+      <p class="muted" id="moveContext"></p>
+      <p class="dialog-error" id="moveError"></p>
+    </div>
+    <div class="foot2">
+      <button type="button" class="ghost" data-close>Cancel</button>
+      <button type="submit" class="primary">Post movement</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Location create / edit -->
+<dialog id="locationDialog">
+  <form method="dialog" id="locationForm">
+    <div class="head"><h2 id="locationDialogTitle">New location</h2></div>
+    <div class="body">
+      <div class="pair">
+        <label class="field"><span>Code</span><input name="code" required maxlength="32" placeholder="WH-A"></label>
+        <label class="field">
+          <span>Kind</span>
+          <select name="kind">
+            <option value="warehouse">Warehouse</option>
+            <option value="store">Store</option>
+            <option value="transit">Transit</option>
+          </select>
+        </label>
+      </div>
+      <label class="field"><span>Name</span><input name="name" required maxlength="200" placeholder="Jurong Warehouse"></label>
+      <p class="dialog-error" id="locationError"></p>
+    </div>
+    <div class="foot2">
+      <button type="button" class="ghost" data-close>Cancel</button>
+      <button type="submit" class="primary" id="locationSubmit">Create location</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+'use strict';
+
+/**
+ * One page over the REST API. No framework: the state is small enough that
+ * "fetch, then redraw the table" is easier to follow than anything with a
+ * lifecycle, and every write goes through the same API a script would use.
+ */
+
+const state = {
+  view: 'items',
+  items: [],
+  itemsTotal: 0,
+  locations: [],
+  movements: [],
+  movementsTotal: 0,
+  editingItemId: null,
+  editingLocationId: null,
+  moveItem: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const money = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = (n) => n.toLocaleString();
+
+/** Everything the DOM sees goes through here, so a stray apostrophe stays text. */
+function text(value) {
+  return document.createTextNode(value === null || value === undefined ? '' : String(value));
+}
+
+function el(tag, opts = {}, children = []) {
+  const node = document.createElement(tag);
+  if (opts.className) node.className = opts.className;
+  if (opts.title) node.title = opts.title;
+  if (opts.type) node.type = opts.type;
+  if (opts.onClick) node.addEventListener('click', opts.onClick);
+  for (const child of [].concat(children)) {
+    node.appendChild(typeof child === 'string' || typeof child === 'number' ? text(child) : child);
+  }
+  return node;
+}
+
+/** Fetch wrapper that surfaces the API's own error message. */
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: options.body ? { 'content-type': 'application/json' } : {},
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const payload = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `${response.status} ${response.statusText}`);
+  }
+  return payload;
+}
+
+function toast(message, bad = false) {
+  const node = el('div', { className: bad ? 'bad' : '' }, message);
+  $('toast').appendChild(node);
+  setTimeout(() => node.remove(), bad ? 6000 : 3000);
+}
+
+// --- summary tiles ---------------------------------------------------------
+
+async function loadSummary() {
+  const s = await api('/stock/summary');
+  const tiles = [
+    { label: 'Items', value: num(s.items) },
+    { label: 'Locations', value: num(s.locations) },
+    { label: 'Units on hand', value: num(s.unitsOnHand) },
+    { label: 'Stock value', value: money(s.stockValue) },
+    { label: 'Movements', value: num(s.movements) },
+    { label: 'Low stock', value: num(s.lowStockItems), alert: s.lowStockItems > 0 },
+  ];
+
+  const host = $('tiles');
+  host.replaceChildren(
+    ...tiles.map((tile) =>
+      el('div', { className: tile.alert ? 'tile alert' : 'tile' }, [
+        el('div', { className: 'label' }, tile.label),
+        el('div', { className: 'value' }, tile.value),
+      ]),
+    ),
+  );
+}
+
+// --- items -----------------------------------------------------------------
+
+function itemQuery() {
+  const params = new URLSearchParams({ sort: $('sort').value, limit: '200' });
+  const q = $('q').value.trim();
+  if (q) params.set('q', q);
+  if ($('category').value) params.set('category', $('category').value);
+  if ($('lowOnly').checked) params.set('lowStock', 'true');
+  if ($('showArchived').checked) params.set('archived', 'true');
+  return params;
+}
+
+async function loadItems() {
+  const data = await api(`/items?${itemQuery()}`);
+  state.items = data.items;
+  state.itemsTotal = data.total;
+  renderItems();
+}
+
+function renderItems() {
+  const rows = state.items.map((item) => {
+    const onHand = el('td', { className: 'num' }, [
+      el('span', { className: item.lowStock ? 'pill low' : 'pill' }, `${num(item.onHand)} ${item.unit}`),
+    ]);
+
+    const actions = el('td', { className: 'actions' }, [
+      el('button', { className: 'link', onClick: () => openMove(item) }, 'Move'),
+      el('button', { className: 'link', onClick: () => openItem(item) }, 'Edit'),
+      el('button', { className: 'danger', title: 'Delete item', onClick: () => removeItem(item) }, '✕'),
+    ]);
+
+    const name = el('td', { className: 'wrap' }, [
+      el('div', {}, item.name),
+      item.archived ? el('span', { className: 'pill' }, 'archived') : text(''),
+      item.description ? el('div', { className: 'muted' }, item.description) : text(''),
+    ]);
+
+    return el('tr', {}, [
+      el('td', { className: 'sku' }, item.sku),
+      name,
+      el('td', {}, item.category || '—'),
+      onHand,
+      el('td', { className: 'num' }, num(item.reorderPoint)),
+      el('td', { className: 'num' }, money(item.unitCost)),
+      el('td', { className: 'num' }, money(item.stockValue)),
+      actions,
+    ]);
+  });
+
+  $('itemRows').replaceChildren(...rows);
+
+  if (rows.length === 0) {
+    $('itemRows').replaceChildren(
+      el('tr', {}, [el('td', { className: 'empty' }, 'Nothing matches those filters.')]),
+    );
+    $('itemRows').firstChild.firstChild.colSpan = 8;
+  }
+
+  const shown = state.items.length;
+  $('itemsFoot').replaceChildren(
+    text(shown === state.itemsTotal ? `${shown} item${shown === 1 ? '' : 's'}` : `${shown} of ${state.itemsTotal} items`),
+  );
+}
+
+async function loadCategories() {
+  const { categories } = await api('/items/categories');
+  const select = $('category');
+  const current = select.value;
+  select.replaceChildren(
+    el('option', {}, 'All categories'),
+    ...categories.map((name) => {
+      const option = el('option', {}, name);
+      option.value = name;
+      return option;
+    }),
+  );
+  select.firstChild.value = '';
+  select.value = categories.includes(current) ? current : '';
+}
+
+// --- item dialog -----------------------------------------------------------
+
+function openItem(item = null) {
+  const form = $('itemForm');
+  form.reset();
+  $('itemError').textContent = '';
+  state.editingItemId = item ? item.id : null;
+
+  $('itemDialogTitle').textContent = item ? `Edit ${item.sku}` : 'New item';
+  $('itemSubmit').textContent = item ? 'Save changes' : 'Create item';
+  $('archivedRow').hidden = !item;
+
+  if (item) {
+    form.sku.value = item.sku;
+    form.name.value = item.name;
+    form.category.value = item.category || '';
+    form.unit.value = item.unit;
+    form.unitCost.value = item.unitCost;
+    form.reorderPoint.value = item.reorderPoint;
+    form.description.value = item.description || '';
+    form.archived.checked = item.archived;
+  }
+
+  $('itemDialog').showModal();
+}
+
+function itemPayload(form, editing) {
+  const body = {
+    sku: form.sku.value.trim(),
+    name: form.name.value.trim(),
+    unit: form.unit.value.trim() || 'each',
+    unitCost: Number(form.unitCost.value || 0),
+    reorderPoint: Number(form.reorderPoint.value || 0),
+    // Empty means "no value": the API takes null to clear these.
+    category: form.category.value.trim() || null,
+    description: form.description.value.trim() || null,
+  };
+  if (editing) body.archived = form.archived.checked;
+  return body;
+}
+
+$('itemForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const editing = state.editingItemId !== null;
+
+  try {
+    await api(editing ? `/items/${state.editingItemId}` : '/items', {
+      method: editing ? 'PATCH' : 'POST',
+      body: itemPayload(form, editing),
+    });
+    $('itemDialog').close();
+    toast(editing ? 'Item saved.' : 'Item created.');
+    await refresh();
+  } catch (err) {
+    $('itemError').textContent = err.message;
+  }
+});
+
+async function removeItem(item) {
+  if (!confirm(`Delete ${item.sku} — ${item.name}?`)) return;
+  try {
+    await api(`/items/${item.id}`, { method: 'DELETE' });
+    toast(`Deleted ${item.sku}.`);
+    await refresh();
+  } catch (err) {
+    // The API refuses to drop ledger history unless asked twice; relay that
+    // choice rather than silently forcing it.
+    if (!/movement/.test(err.message)) return toast(err.message, true);
+    if (!confirm(`${err.message}\n\nDelete the item and its movements anyway?`)) return;
+    try {
+      await api(`/items/${item.id}?force=true`, { method: 'DELETE' });
+      toast(`Deleted ${item.sku} and its history.`);
+      await refresh();
+    } catch (forced) {
+      toast(forced.message, true);
+    }
+  }
+}
+
+// --- movement dialog -------------------------------------------------------
+
+function locationOptions(select, selectedId = null) {
+  select.replaceChildren(
+    ...state.locations.map((location) => {
+      const option = el('option', {}, `${location.code} — ${location.name}`);
+      option.value = String(location.id);
+      return option;
+    }),
+  );
+  if (selectedId !== null) select.value = String(selectedId);
+}
+
+function openMove(item) {
+  const form = $('moveForm');
+  form.reset();
+  $('moveError').textContent = '';
+  state.moveItem = item;
+
+  $('moveDialogTitle').textContent = `Move stock — ${item.sku}`;
+  locationOptions($('moveLocation'));
+  locationOptions($('moveToLocation'), state.locations.length > 1 ? state.locations[1].id : null);
+  syncMoveKind();
+  $('moveDialog').showModal();
+}
+
+function syncMoveKind() {
+  const kind = $('moveKind').value;
+  const item = state.moveItem;
+  const transfer = kind === 'transfer';
+
+  $('toRow').hidden = !transfer;
+  $('fromLabel').textContent = transfer ? 'From location' : 'Location';
+  $('qtyHint').textContent =
+    kind === 'adjustment'
+      ? `signed: -3 writes off 3 ${item ? item.unit : 'units'}`
+      : `${item ? item.unit : 'units'}, positive`;
+  $('moveQuantity').min = kind === 'adjustment' ? '' : '1';
+
+  const onHand = item ? `${num(item.onHand)} ${item.unit} on hand across all locations.` : '';
+  $('moveContext').textContent = onHand;
+}
+
+$('moveKind').addEventListener('change', syncMoveKind);
+
+$('moveForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const kind = form.kind.value;
+  const quantity = Number(form.quantity.value);
+
+  const shared = {
+    itemId: state.moveItem.id,
+    quantity,
+    reference: form.reference.value.trim() || null,
+    note: form.note.value.trim() || null,
+  };
+  // datetime-local has no timezone; treat what the user typed as local time.
+  if (form.occurredAt.value) shared.occurredAt = new Date(form.occurredAt.value).toISOString();
+
+  try {
+    if (kind === 'transfer') {
+      await api('/transfers', {
+        method: 'POST',
+        body: {
+          ...shared,
+          fromLocationId: Number(form.locationId.value),
+          toLocationId: Number(form.toLocationId.value),
+        },
+      });
+    } else {
+      await api('/movements', {
+        method: 'POST',
+        body: { ...shared, kind, locationId: Number(form.locationId.value) },
+      });
+    }
+    $('moveDialog').close();
+    toast('Movement posted.');
+    await refresh();
+  } catch (err) {
+    $('moveError').textContent = err.message;
+  }
+});
+
+// --- movements -------------------------------------------------------------
+
+const KIND_PILL = {
+  receipt: 'in',
+  transfer_in: 'in',
+  issue: 'out',
+  transfer_out: 'out',
+  adjustment: 'adj',
+};
+
+const KIND_LABEL = {
+  receipt: 'Receipt',
+  issue: 'Issue',
+  adjustment: 'Adjustment',
+  transfer_in: 'Transfer in',
+  transfer_out: 'Transfer out',
+};
+
+function movementQuery() {
+  const params = new URLSearchParams({ limit: '200' });
+  if ($('mItem').value) params.set('item', $('mItem').value);
+  if ($('mLocation').value) params.set('location', $('mLocation').value);
+  if ($('mKind').value) params.set('kind', $('mKind').value);
+  if ($('mFrom').value) params.set('from', $('mFrom').value);
+  if ($('mTo').value) params.set('to', $('mTo').value);
+  return params;
+}
+
+async function loadMovements() {
+  const data = await api(`/movements?${movementQuery()}`);
+  state.movements = data.movements;
+  state.movementsTotal = data.total;
+  renderMovements();
+}
+
+function renderMovements() {
+  const rows = state.movements.map((movement) => {
+    const when = new Date(movement.occurredAt);
+    const signed = `${movement.quantity > 0 ? '+' : ''}${num(movement.quantity)}`;
+
+    return el('tr', {}, [
+      el('td', { title: movement.occurredAt }, when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })),
+      el('td', {}, [el('span', { className: `pill ${KIND_PILL[movement.kind]}` }, KIND_LABEL[movement.kind])]),
+      el('td', { className: 'wrap' }, [el('span', { className: 'sku' }, movement.sku), text(` ${movement.itemName}`)]),
+      el('td', { title: movement.locationName }, movement.locationCode),
+      el('td', { className: 'num' }, signed),
+      el('td', {}, movement.reference || '—'),
+      el('td', { className: 'wrap muted' }, movement.note || ''),
+      el('td', { className: 'actions' }, [
+        el('button', {
+          className: 'danger',
+          title: movement.transferGroup ? 'Delete both halves of this transfer' : 'Delete this movement',
+          onClick: () => removeMovement(movement),
+        }, '✕'),
+      ]),
+    ]);
+  });
+
+  $('movementRows').replaceChildren(...rows);
+
+  if (rows.length === 0) {
+    $('movementRows').replaceChildren(
+      el('tr', {}, [el('td', { className: 'empty' }, 'No movements match those filters.')]),
+    );
+    $('movementRows').firstChild.firstChild.colSpan = 8;
+  }
+
+  const shown = state.movements.length;
+  $('movementsFoot').replaceChildren(
+    text(shown === state.movementsTotal ? `${shown} movement${shown === 1 ? '' : 's'}` : `${shown} of ${state.movementsTotal} movements`),
+  );
+}
+
+async function removeMovement(movement) {
+  const warning = movement.transferGroup
+    ? 'This is half of a transfer; both halves will be deleted.'
+    : 'This cannot be undone.';
+  if (!confirm(`Delete this ${KIND_LABEL[movement.kind].toLowerCase()} of ${movement.quantity}?\n\n${warning}`)) return;
+
+  try {
+    await api(`/movements/${movement.id}`, { method: 'DELETE' });
+    toast('Movement deleted.');
+    await refresh();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function fillMovementFilters() {
+  const itemSelect = $('mItem');
+  const current = itemSelect.value;
+  itemSelect.replaceChildren(
+    el('option', {}, 'All items'),
+    ...state.items.map((item) => {
+      const option = el('option', {}, `${item.sku} — ${item.name}`);
+      option.value = String(item.id);
+      return option;
+    }),
+  );
+  itemSelect.firstChild.value = '';
+  itemSelect.value = current;
+
+  const locationSelect = $('mLocation');
+  const currentLocation = locationSelect.value;
+  locationSelect.replaceChildren(
+    el('option', {}, 'All locations'),
+    ...state.locations.map((location) => {
+      const option = el('option', {}, `${location.code} — ${location.name}`);
+      option.value = String(location.id);
+      return option;
+    }),
+  );
+  locationSelect.firstChild.value = '';
+  locationSelect.value = currentLocation;
+}
+
+// --- locations -------------------------------------------------------------
+
+async function loadLocations() {
+  const { locations } = await api('/locations');
+  state.locations = locations;
+  renderLocations();
+}
+
+function renderLocations() {
+  const cards = state.locations.map((location) =>
+    el('div', { className: 'loc' }, [
+      el('h3', {}, [el('code', {}, location.code)]),
+      el('div', {}, location.name),
+      el('div', { className: 'muted' }, `${location.kind} · ${num(location.itemCount)} item${location.itemCount === 1 ? '' : 's'} · ${num(location.unitsOnHand)} units`),
+      el('div', { className: 'row' }, [
+        el('button', { className: 'ghost', onClick: () => openLocation(location) }, 'Edit'),
+        el('button', { className: 'ghost', onClick: () => { $('mLocation').value = String(location.id); show('movements'); loadMovements(); } }, 'Movements'),
+        el('span', { className: 'spacer' }),
+        el('button', { className: 'danger', onClick: () => removeLocation(location) }, '✕'),
+      ]),
+    ]),
+  );
+
+  $('locationCards').replaceChildren(
+    ...(cards.length > 0 ? cards : [el('div', { className: 'empty' }, 'No locations yet.')]),
+  );
+}
+
+function openLocation(location = null) {
+  const form = $('locationForm');
+  form.reset();
+  $('locationError').textContent = '';
+  state.editingLocationId = location ? location.id : null;
+
+  $('locationDialogTitle').textContent = location ? `Edit ${location.code}` : 'New location';
+  $('locationSubmit').textContent = location ? 'Save changes' : 'Create location';
+
+  if (location) {
+    form.code.value = location.code;
+    form.name.value = location.name;
+    form.kind.value = location.kind;
+  }
+
+  $('locationDialog').showModal();
+}
+
+$('locationForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const editing = state.editingLocationId !== null;
+
+  try {
+    await api(editing ? `/locations/${state.editingLocationId}` : '/locations', {
+      method: editing ? 'PATCH' : 'POST',
+      body: {
+        code: form.code.value.trim(),
+        name: form.name.value.trim(),
+        kind: form.kind.value,
+      },
+    });
+    $('locationDialog').close();
+    toast(editing ? 'Location saved.' : 'Location created.');
+    await refresh();
+  } catch (err) {
+    $('locationError').textContent = err.message;
+  }
+});
+
+async function removeLocation(location) {
+  if (!confirm(`Delete location ${location.code} — ${location.name}?`)) return;
+  try {
+    await api(`/locations/${location.id}`, { method: 'DELETE' });
+    toast(`Deleted ${location.code}.`);
+    await refresh();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+// --- wiring ----------------------------------------------------------------
+
+function show(view) {
+  state.view = view;
+  for (const section of ['items', 'movements', 'locations']) {
+    $(`view-${section}`).hidden = section !== view;
+  }
+  for (const tab of document.querySelectorAll('nav.tabs button')) {
+    tab.setAttribute('aria-selected', String(tab.dataset.view === view));
+  }
+}
+
+for (const tab of document.querySelectorAll('nav.tabs button')) {
+  tab.addEventListener('click', () => {
+    show(tab.dataset.view);
+    if (tab.dataset.view === 'movements') loadMovements().catch(fail);
+  });
+}
+
+for (const button of document.querySelectorAll('[data-close]')) {
+  button.addEventListener('click', () => button.closest('dialog').close());
+}
+
+$('newItem').addEventListener('click', () => openItem());
+$('newLocation').addEventListener('click', () => openLocation());
+
+/** One debounce for the search box; the filters redraw immediately. */
+let searchTimer;
+$('q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadItems().catch(fail), 200);
+});
+
+for (const id of ['category', 'sort', 'lowOnly', 'showArchived']) {
+  $(id).addEventListener('change', () => loadItems().catch(fail));
+}
+
+for (const id of ['mItem', 'mLocation', 'mKind', 'mFrom', 'mTo']) {
+  $(id).addEventListener('change', () => loadMovements().catch(fail));
+}
+
+$('mReset').addEventListener('click', () => {
+  for (const id of ['mItem', 'mLocation', 'mKind', 'mFrom', 'mTo']) $(id).value = '';
+  loadMovements().catch(fail);
+});
+
+function fail(err) {
+  toast(err.message, true);
+}
+
+/** After any write: totals, list, locations, and the ledger if it is on screen. */
+async function refresh() {
+  await Promise.all([loadSummary(), loadItems(), loadLocations(), loadCategories()]);
+  fillMovementFilters();
+  if (state.view === 'movements') await loadMovements();
+}
+
+refresh().catch((err) => {
+  fail(err);
+  document.querySelector('main').prepend(
+    el('div', { className: 'card' }, [
+      el('div', { className: 'empty' }, `Cannot reach the API: ${err.message}`),
+    ]),
+  );
+});
+</script>
+</body>
+</html>
