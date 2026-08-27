@@ -2,9 +2,10 @@
   "name": "crud-app",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Inventory tracking CRUD app on Cloudflare Workers + D1: items, locations, and a stock movement ledger.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "wrangler dev",
@@ -16,12 +17,16 @@
     "seed:local": "wrangler d1 execute crud-app-db --local --file=./seed.sql",
     "seed": "wrangler d1 execute crud-app-db --remote --file=./seed.sql",
     "seed:build": "node scripts/generate-seed.mjs",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260826.1",
     "@types/node": "^24.0.0",
     "typescript": "^5.7.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.126.0"
   },
   "dependencies": {

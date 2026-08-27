@@ -27,6 +27,9 @@
 
   "vars": {
     "ALLOW_NEGATIVE_STOCK": "false",
-    "CORS_ORIGINS": "*"
+    // Empty means same-origin only, which is all the bundled UI needs: it calls
+    // relative paths from the same hostname, so it sends no cross-origin
+    // requests at all. Set a comma-separated list, or "*", to open it up.
+    "CORS_ORIGINS": ""
   }
 }

@@ -25,14 +25,18 @@ export interface Settings {
    * process genuinely books issues before receipts land.
    */
   allowNegativeStock: boolean;
-  /** Origins allowed to call this API from a browser; ["*"] for any. */
+  /**
+   * Origins allowed to call this API from a browser. Empty is the default and
+   * means same-origin only — no Access-Control-Allow-Origin is sent at all.
+   * ["*"] allows any origin.
+   */
   corsOrigins: string[];
 }
 
 export function settings(env: Bindings): Settings {
   return {
     allowNegativeStock: env.ALLOW_NEGATIVE_STOCK === 'true' || env.ALLOW_NEGATIVE_STOCK === '1',
-    corsOrigins: (env.CORS_ORIGINS ?? '*')
+    corsOrigins: (env.CORS_ORIGINS ?? '')
       .split(',')
       .map((origin) => origin.trim())
       .filter((origin) => origin !== ''),
